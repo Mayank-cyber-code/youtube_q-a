@@ -1,4 +1,5 @@
 YouTube Transcript QA
+
 This project enables users to ask questions about YouTube video transcripts via a question-answering system. It consists of a Python backend for transcript processing and a Chrome extension for seamless interaction.
 
 Features
@@ -29,10 +30,9 @@ Frontend
 Load youtube-qa-extension as an unpacked extension in Chrome for the popup interface.
 
 Deployment
-You can deploy the backend to cloud platforms like Render.
+Deployed the backend to cloud platforms like Render.
 The extension can be loaded locally or published to the Chrome Web Store.
 
 License
-MIT (or your chosen license)
+MIT 
 
-You can further personalize this as needed—with author/contact info, example screenshots, or advanced setup instructions.
