@@ -3,6 +3,11 @@ from qa_engine import YouTubeConversationalQA
 
 app = FastAPI()
 qa = YouTubeConversationalQA()  # initialize once at startup
+print("FastAPI app and YouTubeConversationalQA initialized!")
+
+@app.get("/")
+async def root():
+    return {"message": "Service is alive!"}
 
 @app.post('/api/ask')
 async def ask(request: Request):
@@ -12,8 +17,10 @@ async def ask(request: Request):
     # Add session_id if needed, else default
     answer = qa.ask(video_url, question)
     return {"answer": answer}
+
 if __name__ == "__main__":
     import uvicorn
+    import os
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
