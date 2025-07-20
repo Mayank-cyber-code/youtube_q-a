@@ -1,4 +1,5 @@
-const BACKEND_API_URL = "https://YOUR_BACKEND_URL/api/ask"; // <-- PUT YOUR DEPLOYED BACKEND URL HERE
+const BACKEND_API_URL = "https://youtube-q-a.onrender.com/api/ask";
+ // <-- PUT YOUR DEPLOYED BACKEND URL HERE
 
 document.addEventListener("DOMContentLoaded", function () {
     chrome.tabs.query({ active: true, lastFocusedWindow: true }, function (tabs) {
