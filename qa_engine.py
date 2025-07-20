@@ -9,16 +9,12 @@ from dotenv import load_dotenv
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import ChatOpenAI
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 from langchain.schema import Document
 
 import wikipedia  # pip install wikipedia
-
-# --- GOOGLE GEMINI EMBEDDINGS SETUP ---
-from google.cloud import aiplatform
-from google.api_core import exceptions as google_exceptions
 
 # --- SETUP API KEYS ---
 load_dotenv()
@@ -133,42 +129,16 @@ VAGUE_PATTERNS = [
     "unfortunately"
 ]
 
-class GeminiEmbeddings:
-    """
-    Wrapper for Gemini API (Vertex AI Text Embeddings). Mimics .embed_documents().
-    """
-    def __init__(self, model_name="textembedding-gecko@latest", project=None, location="us-central1"):
-        self.model_name = model_name
-        self.project = project or os.environ.get("GCP_PROJECT")
-        self.location = location
-        # Model loading is on demand and handled by API service
-
-    def embed_documents(self, texts: List[str]) -> List[list]:
-        try:
-            # Initialize only when needed (saves memory)
-            aiplatform.init(project=self.project, location=self.location)
-            model = aiplatform.TextEmbeddingModel.from_pretrained(self.model_name)
-            # Each result in output.embeddings is a vector (list of float)
-            output = model.get_embeddings(texts)
-            return [emb.embedding for emb in output]
-        except google_exceptions.GoogleAPICallError as e:
-            logger.error(f"Error from Gemini API: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Gemini embedding error: {e}")
-            raise
-
 class YouTubeConversationalQA:
     """
     Retrieval-augmented, chat-style Q&A for YouTube videos.
-    Uses Gemini embeddings (Vertex AI) and Wikipedia+web fallback.
+    Has conversation memory and Wikipedia+web fallback.
     """
     def __init__(self, model="meta-llama/llama-3-70b-instruct:nitro"):
-        # --- Use Gemini embeddings instead of HuggingFace ---
-        self.embeddings = GeminiEmbeddings(
-            model_name="textembedding-gecko@001",  # or @latest, consult Vertex AI docs
-            project=os.environ.get("GCP_PROJECT"),
-            location="us-central1"
+        # --- Use OpenAI Embeddings ---
+        self.embeddings = OpenAIEmbeddings(
+            openai_api_key=os.environ["OPENAI_API_KEY"],
+            # model="text-embedding-3-small",  # Default is latest; you can uncomment to specify
         )
         self.vectorstore_cache = {}
         self.llm = ChatOpenAI(
@@ -186,21 +156,13 @@ class YouTubeConversationalQA:
             docs = get_transcript_docs(video_id)
             if not docs:
                 raise RuntimeError("No transcript available for this video and answer may be wrong.")
-
-            # --- Use Gemini embeddings for splits ---
             splitter = RecursiveCharacterTextSplitter(
                 chunk_size=1000, chunk_overlap=200, length_function=len,
                 separators=["\n\n", "\n", ". ", " ", ""]
             )
             splits = splitter.split_documents(docs)
-            # Get just the text for embedding
-            split_texts = [doc.page_content for doc in splits]
-            # Get vectors from Gemini API
-            vectors = self.embeddings.embed_documents(split_texts)
-            # Build Docs with precomputed vectors for FAISS
-            vdb = FAISS.from_texts(split_texts, embedding=self.embeddings.embed_documents)
+            vdb = FAISS.from_documents(splits, self.embeddings)
             self.vectorstore_cache[video_id] = vdb
-
         retriever = self.vectorstore_cache[video_id].as_retriever()
         if session_id not in self.convs:
             self.convs[session_id] = ConversationBufferMemory(
