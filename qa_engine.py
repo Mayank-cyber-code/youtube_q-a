@@ -17,7 +17,7 @@ from pytube import YouTube
 import requests
 import html
 
-# --- ENV & LOGGING ---
+# --- ENV & LOGGING SETUP ---
 load_dotenv()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
@@ -196,21 +196,18 @@ class YouTubeConversationalQA:
         context_answer = None
         chain = self.build_chain(video_url, session_id)
 
-        def llm_summary_prompt(chain, prompt_q):
-            custom_template = (
-                "Given the following video transcript, summarize the main topic or content of this video in clear English. "
-                "If the transcript is in another language, assume it has already been translated. "
-                "Do not make up facts. Please provide 2-4 sentence summary.\nTranscript: {context}"
-            )
-            return chain.invoke({"question": custom_template})
+        def llm_summary_prompt(chain, custom_q):
+            template = ("Given the following video transcript, summarize the main topic or content of this video in clear English. "
+                        "If the transcript is in another language, assume translation has already been done. "
+                        "Do not make up facts. TL;DR in 2-4 sentences.\nTranscript: {context}")
+            return chain.invoke({"question": template})
 
         if chain is not None:
             try:
                 if is_summary_question(question):
                     context_answer = (llm_summary_prompt(chain, question).get("answer","") or "").strip()
-                    # Second try if first answer is vague
                     if self.is_incomplete(context_answer):
-                        context_answer = (llm_summary_prompt(chain, "Try again: summarize in clear English.").get("answer","") or "").strip()
+                        context_answer = (llm_summary_prompt(chain, "Please try again; summarize using clear English only.").get("answer","") or "").strip()
                 else:
                     result = chain.invoke({"question": question})
                     context_answer = (result.get("answer", "") if result else "").strip()
@@ -223,11 +220,10 @@ class YouTubeConversationalQA:
         else:
             fallback_to_title = True
 
-        # Return transcript-based answer if valid
         if context_answer and not self.is_incomplete(context_answer):
             return context_answer
 
-        # Fallback: Wikipedia with title, then cleaned title
+        # Fallback: title-based Wikipedia (and cleaned-up title retry)
         title_q = None
         if fallback_to_title:
             title_q = get_video_title(video_url)
@@ -250,7 +246,6 @@ class YouTubeConversationalQA:
             if wiki_ans2 and not self.is_incomplete(wiki_ans2):
                 return wiki_ans2
 
-        # Final fallback: explicit web search links
         return web_search_links(question)
 
 if __name__ == "__main__":
