@@ -1,41 +1,25 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 import os
-
-from qa_engine import YouTubeConversationalQA
+from qa_engine import TranscriptQAModel
 
 app = FastAPI()
-qa = YouTubeConversationalQA()
+qa = TranscriptQAModel()
 
-# Allow CORS for web/extension access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Use strict origins for production!
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=['*'],
+    allow_methods=['*'],
+    allow_headers=['*'],
 )
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-@app.get("/")
-def serve_frontend():
-    return FileResponse("static/frontend.html")
-
-@app.post('/api/ask')
-async def ask(request: Request):
+@app.post('/api/ask-transcript')
+async def ask_transcript(request: Request):
     data = await request.json()
-    video_url = data['video_url']
-    question = data['question']
-    answer = qa.ask(video_url, question)
+    transcript = data.get('transcript')
+    question = data.get('question')
+    if not transcript or not question:
+        return {"error": "Missing transcript or question"}
+    answer = qa.ask(transcript, question)
     return {"answer": answer}
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", 10000)),
-        reload=True
-    )
