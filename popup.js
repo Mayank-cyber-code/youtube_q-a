@@ -1,63 +1,48 @@
-const BACKEND_API_URL = "https://youtube-q-a.onrender.com/api/ask"; // Change if your backend URL differs
+const BACKEND_API_URL = "https://your-backend-domain.com/api/ask-transcript"; // Set to your backend endpoint
 
-function displayResult(msg, disabled = false) {
-    document.getElementById('result').textContent = msg;
-    document.getElementById('ask_btn').disabled = disabled;
-    document.getElementById('question').disabled = disabled;
-}
+document.addEventListener("DOMContentLoaded", () => {
+  let currentTranscript = "";
+  document.getElementById("ask_btn").disabled = true;
 
-document.addEventListener("DOMContentLoaded", function () {
-    chrome.tabs.query({ active: true, lastFocusedWindow: true }, function (tabs) {
-        const tab = tabs[0];
-        if (tab && tab.url && tab.url.match(/^https:\/\/www\.youtube\.com\/watch\?v=/)) {
-            document.getElementById('video_url_group').style.display = "none";
-            // Do NOT set question value or auto-fetch
-            document.getElementById('ask_btn').disabled = false;
-            document.getElementById('question').disabled = false;
-            // Store video URL for question send
-            document.getElementById('ask_btn').dataset.videoUrl = tab.url;
+  // Request content script for transcript
+  chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+    chrome.tabs.sendMessage(
+      tabs[0].id,
+      {action: "getTranscript"},
+      function (response) {
+        if(response && response.transcript) {
+          document.getElementById("transcript").value = response.transcript;
+          document.getElementById("ask_btn").disabled = false;
+          currentTranscript = response.transcript;
         } else {
-            document.getElementById('video_url_group').style.display = "none";
-            displayResult('Please load a YouTube "watch" video in your current tab and reload the extension.', true);
+          document.getElementById("result").textContent = "Unable to fetch transcript on this video.";
         }
-    });
+      }
+    );
+  });
 
-    document.getElementById('ask_btn').addEventListener('click', () => {
-        const video_url = document.getElementById('ask_btn').dataset.videoUrl;
-        const question = document.getElementById('question').value.trim();
-        if (!video_url) {
-            displayResult("Please open a YouTube video and reload the extension.", true);
-            return;
-        }
-        if (!question) {
-            displayResult("Please enter a question.");
-            return;
-        }
-        fetchAnswer(video_url, question);
-    });
-});
-
-function fetchAnswer(video_url, question) {
-    displayResult('Loading...', true);
-    fetch(BACKEND_API_URL, {
+  document.getElementById('ask_btn').addEventListener('click', async () => {
+    const transcript = document.getElementById('transcript').value;
+    const question = document.getElementById('question').value.trim();
+    if (!transcript) {
+      document.getElementById('result').textContent = "Transcript not loaded.";
+      return;
+    }
+    if (!question) {
+      document.getElementById('result').textContent = "Please enter a question.";
+      return;
+    }
+    document.getElementById('result').textContent = "Loading...";
+    try {
+      const res = await fetch(BACKEND_API_URL, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({video_url, question})
-    })
-    .then(res => res.json())
-    .then(data => {
-        if(data.answer) {
-            displayResult(data.answer);
-        } else if(data.error) {
-            displayResult("Error: " + data.error);
-        } else {
-            displayResult("No answer returned.");
-        }
-        document.getElementById('ask_btn').disabled = false;
-        document.getElementById('question').disabled = false;
-    })
-    .catch(err => {
-        displayResult("Error: " + err, true);
-    });
-}
-
+        body: JSON.stringify({transcript, question})
+      });
+      const data = await res.json();
+      document.getElementById('result').textContent = data.answer || data.error || "No answer.";
+    } catch (e) {
+      document.getElementById('result').textContent = "Network error: " + e;
+    }
+  });
+});
