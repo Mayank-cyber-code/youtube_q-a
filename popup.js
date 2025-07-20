@@ -1,9 +1,8 @@
 const BACKEND_API_URL = "https://youtube-q-a.onrender.com/api/ask-transcript";
 
-// Utility to get the currently focused YouTube tab
 function getCurrentYouTubeTab(cb) {
   chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-    if (tabs && tabs.length > 0 && tabs[0].url.startsWith("https://www.youtube.com/watch")) {
+    if (tabs && tabs.length > 0 && tabs[0].url && tabs[0].url.startsWith("https://www.youtube.com/watch")) {
       cb(tabs[0]);
     } else {
       cb(null);
@@ -22,8 +21,6 @@ document.addEventListener("DOMContentLoaded", () => {
       resultField.textContent = "Please open a YouTube video tab.";
       return;
     }
-
-    // Fetch transcript from yt_transcript.js content script in that tab
     chrome.tabs.sendMessage(
       tab.id,
       { action: "getTranscript" },
