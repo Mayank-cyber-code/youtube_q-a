@@ -1,4 +1,4 @@
-const BACKEND_API_URL = "https://your-backend-domain.com/api/ask-transcript"; // change to your actual API
+const BACKEND_API_URL = "https://youtube-q-a.onrender.com/api/ask-transcript"; // change to your actual API
 
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("ask_btn").disabled = true;
