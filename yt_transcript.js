@@ -1,14 +1,16 @@
+// content.js
+
 console.log("[Extension] Content script loaded.");
 
-function waitForCaptions(attempts = 15) {
+function waitForCaptions(attempts = 20) {
   return new Promise((resolve) => {
     function poll(count) {
-      const captions = window.ytInitialPlayerResponse && window.ytInitialPlayerResponse.captions;
-      if (captions && captions.playerCaptionsTracklistRenderer && captions.playerCaptionsTracklistRenderer.captionTracks) {
+      const c = window.ytInitialPlayerResponse && window.ytInitialPlayerResponse.captions;
+      if (c && c.playerCaptionsTracklistRenderer && c.playerCaptionsTracklistRenderer.captionTracks) {
         console.log("[Extension] Captions found!");
-        resolve(captions.playerCaptionsTracklistRenderer.captionTracks);
+        resolve(c.playerCaptionsTracklistRenderer.captionTracks);
       } else if (count < attempts) {
-        setTimeout(() => poll(count + 1), 300);
+        setTimeout(() => poll(count + 1), 400);
       } else {
         console.warn("[Extension] Timed out waiting for captions.");
         resolve(null);
@@ -30,20 +32,16 @@ function fetchTranscriptWithXHR(url) {
             const xmlDoc = parser.parseFromString(xhr.responseText, "text/xml");
             const texts = xmlDoc.querySelectorAll("text");
             const transcript = Array.from(texts).map(node => node.textContent).join("\n").trim();
-            console.log("[Extension] Transcript fetched, length:", transcript.length);
             resolve(transcript);
           } catch (e) {
-            console.error("[Extension] XML parse error:", e);
             resolve("");
           }
         } else {
-          console.warn("[Extension] XHR failed with status:", xhr.status);
           resolve("");
         }
       }
     };
     xhr.onerror = function () {
-      console.error("[Extension] XHR network error.");
       resolve("");
     };
     xhr.send();
@@ -51,39 +49,25 @@ function fetchTranscriptWithXHR(url) {
 }
 
 async function getTranscriptFromPage() {
-  console.log("[Extension] getTranscriptFromPage called");
   const captionTracks = await waitForCaptions();
-  if (!captionTracks || captionTracks.length === 0) {
-    console.warn("[Extension] No captionTracks found on this video.");
-    return "";
-  }
+  if (!captionTracks || captionTracks.length === 0) return "";
+
+  // Prefer English track if available, otherwise first track.
   const preferred = captionTracks.find(t => t.languageCode && t.languageCode.startsWith("en")) || captionTracks[0];
-  console.log("[Extension] Using caption track:", preferred);
   const url = preferred.baseUrl;
-  console.log("[Extension] Transcript URL to fetch:", url);
-  if (!url) {
-    console.warn("[Extension] Caption track has no baseUrl.");
-    return "";
-  }
-  try {
-    // Use XMLHttpRequest instead of fetch due to CORS/isolation issues
-    const transcript = await fetchTranscriptWithXHR(url);
-    if (!transcript) {
-      console.warn("[Extension] Empty transcript fetched.");
-    }
-    return transcript;
-  } catch (e) {
-    console.error("[Extension] Unexpected error:", e);
-    return "";
-  }
+  if (!url) return "";
+
+  // Fetch transcript XML using XMLHttpRequest because fetch() may fail from extension context
+  return await fetchTranscriptWithXHR(url);
 }
 
+// Listen for messages from popup or background
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "getTranscript") {
     getTranscriptFromPage().then(transcript => {
       sendResponse({ transcript });
     });
-    // Return true to indicate async response
-    return true;
+    return true; // Indicates async response
   }
 });
+
