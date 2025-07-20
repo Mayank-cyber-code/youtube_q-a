@@ -196,7 +196,7 @@ class YouTubeConversationalQA:
                     "Summarize the main topic or content of the following YouTube video transcript in clear English. "
                     "Use only the transcript, do not use outside sources or speculate. "
                     "Transcript:\n\n"
-                    f"{transcript_text}\n\nSummary (2-4 sentences):"
+                    f"{transcript_text}\n\nSummary (5-10 sentences):"
                 )
                 try:
                     answer = self.llm.invoke(prompt)
