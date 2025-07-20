@@ -7,18 +7,26 @@
     body { max-width: 420px; margin: 40px auto; font-family: sans-serif; background: #fafcff; }
     h2 { margin-bottom: 18px; }
     label { display:block; margin-top: 12px;}
-    input, button { width:100%; margin:6px 0; padding: 8px; }
+    input, button, textarea { width:100%; margin:6px 0; padding: 8px; }
+    #transcript { min-height:128px; background: #f4f8fa;}
     #result { margin-top:16px; background: #eef3fb; min-height:52px; padding:10px;}
     button { background: #2979ff; border:0; color: #fff; font-weight:600; cursor:pointer; }
   </style>
 </head>
 <body>
   <h2>YouTube Video Q&A</h2>
-  <form id="qaForm">
+  <form id="transcriptForm">
     <label>
-      YouTube Video URL:
+      Paste YouTube Video URL:
       <input id="video_url" required placeholder="https://www.youtube.com/watch?v=..." />
     </label>
+    <button type="button" id="fetch_transcript">Fetch Transcript</button>
+  </form>
+
+  <label>Transcript:
+    <textarea id="transcript" readonly placeholder="Transcript will appear here..."></textarea>
+  </label>
+  <form id="qaForm">
     <label>
       Your Question:
       <input id="question" required placeholder="Ask a question..." />
@@ -27,24 +35,64 @@
   </form>
   <div id="result"></div>
   <script>
+    // Helper: Simple extraction for EN captions via YouTube Transcript API (client-side)
+    async function fetchYTTranscript(videoUrl) {
+      // Use a lightweight third-party service or browser-side JS
+      try {
+        const videoId = (videoUrl.match(/v=([a-zA-Z0-9_-]{11})/)||[])[1];
+        if (!videoId) return "No valid video ID.";
+        // Free endpoint for demonstration only (be kind)
+        const res = await fetch(`https://yt.lemnoslife.com/videos?part=captionTracks&id=${videoId}`);
+        const data = await res.json();
+        const tracks = (
+            data.items && data.items[0] &&
+            data.items[0].captionTracks && data.items[0].captionTracks.length > 0
+        ) ? data.items[0].captionTracks : null;
+        if (!tracks) return "No transcript found for this video.";
+        // Prefer English or auto captions
+        let t = tracks.find(t => t.languageCode.startsWith("en")) || tracks[0];
+        const xmlres = await fetch(t.baseUrl);
+        const xml = await xmlres.text();
+        // Parse <text> tags
+        const lines = Array.from(xml.matchAll(/<text[^>]*>(.*?)<\/text>/g)).map(m => decodeURIComponent(m[1].replace(/&#39;/g, "'").replace(/&amp;/g, "&")));
+        return lines.length ? lines.join("\n") : "Transcript extraction failed (unusual format).";
+      } catch (e) {
+        return "Failed to fetch transcript: "+e;
+      }
+    }
+
+    const transcriptElem = document.getElementById("transcript");
+    document.getElementById("fetch_transcript").addEventListener("click", async function(e) {
+      const url = document.getElementById("video_url").value.trim();
+      transcriptElem.value = "Loading...";
+      transcriptElem.readOnly = true;
+      const transcript = await fetchYTTranscript(url);
+      transcriptElem.value = transcript;
+      transcriptElem.readOnly = false;
+    });
+
     document.getElementById("qaForm").addEventListener("submit", async function(e) {
       e.preventDefault();
-      const video_url = document.getElementById("video_url").value.trim();
+      const transcript = document.getElementById("transcript").value.trim();
       const question = document.getElementById("question").value.trim();
       const resultElem = document.getElementById("result");
-      if(!video_url || !question) {
-        resultElem.textContent = "Please fill in video URL and question.";
+      if(!transcript || transcript.match(/No transcript|Loading/)) {
+        resultElem.textContent = "Please load a transcript from a valid YouTube video first.";
+        return;
+      }
+      if(!question) {
+        resultElem.textContent = "Please fill in your question.";
         return;
       }
       resultElem.textContent = "Loading...";
       try {
-        const response = await fetch("/api/ask", {
+        const response = await fetch("/api/ask-transcript", {
           method: "POST",
           headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({video_url, question})
+          body: JSON.stringify({transcript, question})
         });
         const data = await response.json();
-        resultElem.textContent = data.answer;
+        resultElem.textContent = data.answer || data.error || "No answer received.";
       } catch(err) {
         resultElem.textContent = "Error: " + err;
       }
