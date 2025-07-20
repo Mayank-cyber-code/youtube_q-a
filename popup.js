@@ -1,59 +1,75 @@
-const BACKEND_API_URL = "https://httpbin.org/post"; // <-- For testing, replace with your backend endpoint
+const BACKEND_API_URL = "https://youtube-q-a.onrender.com/api/ask-transcript";
 
-function getCurrentTabUrl(cb) {
+// Utility to get the currently focused YouTube tab
+function getCurrentYouTubeTab(cb) {
   chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-    cb(tabs && tabs.length > 0 ? tabs[0] : null);
+    if (tabs && tabs.length > 0 && tabs[0].url.startsWith("https://www.youtube.com/watch")) {
+      cb(tabs[0]);
+    } else {
+      cb(null);
+    }
   });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("ask_btn").disabled = true;
+  const btn = document.getElementById("ask_btn");
+  const transcriptField = document.getElementById("transcript");
+  const resultField = document.getElementById("result");
+  btn.disabled = true;
 
-  getCurrentTabUrl(tab => {
-    if (!tab || !tab.url.startsWith("https://www.youtube.com/watch")) {
-      document.getElementById("result").textContent = "Open a YouTube video tab!";
+  getCurrentYouTubeTab(tab => {
+    if (!tab) {
+      resultField.textContent = "Please open a YouTube video tab.";
       return;
     }
+
+    // Fetch transcript from yt_transcript.js content script in that tab
     chrome.tabs.sendMessage(
       tab.id,
-      {action: "getTranscript"},
+      { action: "getTranscript" },
       function (response) {
-        if(response && response.transcript && response.transcript.length > 10) {
-          document.getElementById("transcript").value = response.transcript;
-          document.getElementById("ask_btn").disabled = false;
-          // Store the tab URL for queries!
-          document.getElementById("ask_btn").dataset.videoUrl = tab.url;
+        if (chrome.runtime.lastError) {
+          resultField.textContent = "Failed to access YouTube tab content.";
+          return;
+        }
+        if (response && response.transcript && response.transcript.length > 10) {
+          transcriptField.value = response.transcript;
+          btn.disabled = false;
+          btn.dataset.videoUrl = tab.url;
         } else {
-          document.getElementById("result").textContent = "Transcript not found for this video.";
+          transcriptField.value = "";
+          resultField.textContent = "No transcript found for this video.";
+          btn.disabled = true;
         }
       }
     );
   });
 
-  document.getElementById('ask_btn').addEventListener('click', async () => {
-    const transcript = document.getElementById('transcript').value;
+  btn.addEventListener('click', async () => {
+    const transcript = transcriptField.value;
     const question = document.getElementById('question').value.trim();
-    const video_url = document.getElementById('ask_btn').dataset.videoUrl || "";
+    const video_url = btn.dataset.videoUrl || "";
+
     if (!transcript || transcript.length < 10) {
-      document.getElementById('result').textContent = "Transcript not loaded or too short.";
+      resultField.textContent = "Transcript too short or missing.";
       return;
     }
     if (!question) {
-      document.getElementById('result').textContent = "Please enter a question.";
+      resultField.textContent = "Please enter your question.";
       return;
     }
-    document.getElementById('result').textContent = "Loading...";
+
+    resultField.textContent = "Loading...";
     try {
       const res = await fetch(BACKEND_API_URL, {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({transcript, question, video_url})
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript, question, video_url })
       });
       const data = await res.json();
-      document.getElementById('result').textContent = (data.answer || data.data || data.error || "No answer.");
+      resultField.textContent = data.answer || data.error || "No answer.";
     } catch (e) {
-      document.getElementById('result').textContent = "Network error: " + e;
+      resultField.textContent = "Network error: " + e;
     }
   });
 });
-
