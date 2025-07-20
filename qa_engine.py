@@ -27,23 +27,25 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(
 logger = logging.getLogger(__name__)
 
 def extract_video_id(url: str) -> str:
-    patterns = [
-        r'(?:v=|\/videos\/|embed\/|youtu\.be\/|shorts\/)([a-zA-Z0-9_-]{11})'
-    ]
+    patterns = [r'(?:v=|/videos/|embed/|youtu\.be/|shorts/)([a-zA-Z0-9_-]{11})']
     for pattern in patterns:
         match = re.search(pattern, url)
         if match:
             return match.group(1)
     raise ValueError("No valid video ID found in URL")
 
-def translate_to_english(text: str) -> str:
+def force_translate_to_english(text: str) -> str:
+    # Always attempt translation unless clearly English (if detection fails, still translate)
     try:
-        detected = GoogleTranslator(source='auto', target='en').detect(text[:160])
-        if detected and detected.lower() != 'en':
-            translated = GoogleTranslator(source='auto', target='en').translate(text)
-            return translated
+        detected = ""
+        try:
+            detected = GoogleTranslator(source='auto', target='en').detect(text[:160])
+        except Exception:
+            detected = ""
+        if not detected or detected.lower() != "en":
+            return GoogleTranslator(source='auto', target='en').translate(text)
     except Exception as e:
-        logger.warning(f"Translation detection/translation failed: {e}")
+        logger.warning(f"Translation failed: {e}")
     return text
 
 def get_transcript_docs(video_id: str, prefer_languages=None) -> Optional[List[Document]]:
@@ -55,7 +57,7 @@ def get_transcript_docs(video_id: str, prefer_languages=None) -> Optional[List[D
             transcript = (YouTubeTranscriptApi.get_transcript(video_id, languages=langs)
                           if langs else YouTubeTranscriptApi.get_transcript(video_id))
             text = " ".join([d['text'] for d in transcript])
-            text_en = translate_to_english(text)
+            text_en = force_translate_to_english(text)
             return [Document(page_content=text_en)]
         except (NoTranscriptFound, TranscriptsDisabled):
             continue
@@ -195,14 +197,28 @@ class YouTubeConversationalQA:
         fallback_to_title = False
         context_answer = None
         chain = self.build_chain(video_url, session_id)
+
+        def llm_summary_prompt(chain, custom_q):
+            # LLM prompt to force a high-level summary
+            template = ("Given the following video transcript, summarize the main topic or content of this video in clear English. "
+                        "If the transcript is in another language, assume translation has already been done. "
+                        "Do not make up facts. TL;DR in 2-4 sentences.\nTranscript: {context}")
+            return chain.invoke({"question": template})
+
         if chain is not None:
             try:
+                # For summary/topic questions, always use strong summary prompt
                 if is_summary_question(question):
-                    custom_template = "Given the following video transcript, briefly summarize the main topic or content of this video. Only use context, do NOT speculate. Transcript: {context}\nIn English, answer in 2-4 sentences."
-                    result = chain.invoke({"question": custom_template})
+                    context_answer = (llm_summary_prompt(chain, question).get("answer","") or "").strip()
+                    # Second chance if vague
+                    if self.is_incomplete(context_answer):
+                        context_answer = (llm_summary_prompt(chain, "Please try again; summarize using clear English only.").get("answer","") or "").strip()
                 else:
                     result = chain.invoke({"question": question})
-                context_answer = (result.get("answer", "") if result else "").strip()
+                    context_answer = (result.get("answer", "") if result else "").strip()
+                    if self.is_incomplete(context_answer):
+                        # Last-resort: try a summary prompt if direct QA fails
+                        context_answer = (llm_summary_prompt(chain, question).get("answer","") or "").strip()
             except Exception as e:
                 logger.warning(f"Transcript-based QA failed: {e}")
                 context_answer = None
@@ -213,16 +229,15 @@ class YouTubeConversationalQA:
         if context_answer and not self.is_incomplete(context_answer):
             return context_answer
 
-        # Fallback: try title for Wikipedia search, then cleaned/shortened title if needed
+        # Fallback: title-based Wikipedia (and cleaned-up title retry)
         title_q = None
         if fallback_to_title:
             title_q = get_video_title(video_url)
             search_term = title_q if title_q else question
             wiki_ans = wikipedia_search(search_term)
-            # Try again with cleaned/shortened title:
             if (not wiki_ans or self.is_incomplete(wiki_ans)) and title_q:
                 short_search = clean_video_title_for_wikipedia(title_q)
-                if short_search != search_term:
+                if short_search != search_term:  # Avoid infinite loop
                     wiki_ans = wikipedia_search(short_search)
             if wiki_ans and not self.is_incomplete(wiki_ans):
                 return wiki_ans
