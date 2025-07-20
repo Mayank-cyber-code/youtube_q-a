@@ -1,15 +1,23 @@
 {
   "manifest_version": 3,
-  "name": "YouTube Transcript QA",
+  "name": "YouTube Transcript Q&A (Client-Side Fetch)",
   "version": "1.0",
-  "description": "Ask questions about the current YouTube video!",
+  "description": "Extracts transcript in browser before sending to backend for AI question answering.",
+  "permissions": ["scripting", "tabs"],
+  "host_permissions": [
+    "https://www.youtube.com/*"
+  ],
   "action": { "default_popup": "popup.html" },
-  "permissions": ["tabs"],
-  "host_permissions": ["https://www.youtube.com/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+      {
+        "matches": ["https://www.youtube.com/watch*"],
+        "js": ["yt_transcript.js"]
+      }
+  ],
   "icons": {
     "16": "icon.png",
     "48": "icon.png",
     "128": "icon.png"
   }
 }
-
