@@ -21,7 +21,7 @@ import html
 load_dotenv()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY not set!")
+    raise RuntimeError("OpenAI API key not set! Please set in the environment or .env file.")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 logger = logging.getLogger(__name__)
@@ -35,7 +35,6 @@ def extract_video_id(url: str) -> str:
     raise ValueError("No valid video ID found in URL")
 
 def ensure_english(text: str) -> str:
-    # Detect language, and translate if not English.
     try:
         detected = ""
         try:
@@ -116,8 +115,12 @@ def web_search_links(query: str) -> str:
     )
 
 def clean_for_wikipedia(query: str) -> str:
+    query = query.strip()
     match = re.match(r"(who|what|when|where|why|how)\s+(is|are|was|were|do|does|did|has|have|can|could|should|would)?\s*(.*)", query, flags=re.IGNORECASE)
-    return match.group(3).strip(" .?") if match else query.strip()
+    if match:
+        topic = match.group(3).strip(" .?")
+        return topic
+    return query
 
 VAGUE_PATTERNS = [
     "do not like each other", "i don't know", "i do not know", "not mentioned", "not provided",
@@ -138,7 +141,9 @@ def is_summary_question(question: str) -> bool:
 
 class YouTubeConversationalQA:
     def __init__(self, model="gpt-3.5-turbo"):
-        self.embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+        self.embeddings = OpenAIEmbeddings(
+            openai_api_key=OPENAI_API_KEY,
+        )
         self.vectorstore_cache = {}
         self.llm = ChatOpenAI(
             openai_api_key=OPENAI_API_KEY,
@@ -164,7 +169,9 @@ class YouTubeConversationalQA:
         retriever = self.vectorstore_cache[video_id].as_retriever()
         if session_id not in self.convs:
             self.convs[session_id] = ConversationBufferMemory(
-                memory_key="chat_history", return_messages=True, output_key="answer"
+                memory_key="chat_history",
+                return_messages=True,
+                output_key="answer"
             )
         return ConversationalRetrievalChain.from_llm(
             llm=self.llm,
@@ -187,24 +194,27 @@ class YouTubeConversationalQA:
         context_answer = None
         chain = self.build_chain(video_url, session_id)
 
-        def llm_summary_prompt():
-            template = (
+        def llm_summary_prompt(chain):
+            custom_template = (
                 "Given the following video transcript, summarize the main topic or content of this video in clear English. "
-                "If the transcript was translated, summarize in English. Do not speculate. TL;DR in 2-4 sentences:\nTranscript: {context}"
+                "Assume translation has already been done if the original was not English. "
+                "Do not speculate. Give a concise summary in 2-4 sentences. Transcript: {context}"
             )
-            return chain.invoke({"question": template})
+            return chain.invoke({"question": custom_template})
 
         if chain is not None:
             try:
                 if is_summary_question(question):
-                    context_answer = (llm_summary_prompt().get("answer","") or "").strip()
+                    context_answer = (llm_summary_prompt(chain).get("answer","") or "").strip()
+                    # Second try if too vague/short
                     if self.is_incomplete(context_answer):
-                        context_answer = (llm_summary_prompt().get("answer","") or "").strip()
+                        context_answer = (llm_summary_prompt(chain).get("answer","") or "").strip()
                 else:
                     result = chain.invoke({"question": question})
                     context_answer = (result.get("answer", "") if result else "").strip()
+                    # For non-summary Q, give a last shot with summary prompt if vague answer
                     if self.is_incomplete(context_answer):
-                        context_answer = (llm_summary_prompt().get("answer","") or "").strip()
+                        context_answer = (llm_summary_prompt(chain).get("answer","") or "").strip()
             except Exception as e:
                 logger.warning(f"Transcript-based QA failed: {e}")
                 context_answer = None
@@ -215,17 +225,20 @@ class YouTubeConversationalQA:
         if context_answer and not self.is_incomplete(context_answer):
             return context_answer
 
-        # Fallback to Wikipedia with video title or question
-        title_q = get_video_title(video_url) if fallback_to_title else None
-        search_term = title_q if title_q else question
-        wiki_ans = wikipedia_search(search_term)
-        if (not wiki_ans or self.is_incomplete(wiki_ans)) and title_q:
-            short_search = clean_video_title_for_wikipedia(title_q)
-            if short_search != search_term:
-                wiki_ans = wikipedia_search(short_search)
-        if wiki_ans and not self.is_incomplete(wiki_ans):
-            return wiki_ans
+        # Fallback: try video title for Wikipedia (then cleaned-up title)
+        title_q = None
+        if fallback_to_title:
+            title_q = get_video_title(video_url)
+            search_term = title_q if title_q else question
+            wiki_ans = wikipedia_search(search_term)
+            if (not wiki_ans or self.is_incomplete(wiki_ans)) and title_q:
+                short_search = clean_video_title_for_wikipedia(title_q)
+                if short_search != search_term:
+                    wiki_ans = wikipedia_search(short_search)
+            if wiki_ans and not self.is_incomplete(wiki_ans):
+                return wiki_ans
 
+        # Further fallback: search Wikipedia by the question directly
         wiki_ans = wikipedia_search(question)
         if wiki_ans and not self.is_incomplete(wiki_ans):
             return wiki_ans
@@ -237,7 +250,6 @@ class YouTubeConversationalQA:
                 return wiki_ans2
 
         return web_search_links(question)
-
 if __name__ == "__main__":
     print("Welcome to YouTube Q&A! Paste any public YouTube video URL.")
     qa = YouTubeConversationalQA()
