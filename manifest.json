@@ -1,17 +1,21 @@
 {
   "manifest_version": 3,
-  "name": "YouTube Transcript Q&A (Client Side Robust)",
+  "name": "YouTube Transcript Extension",
   "version": "1.0",
-  "description": "Extracts transcript in YouTube tab (content script) and sends to backend for Q&A.",
-  "permissions": ["tabs"],
+  "permissions": [
+    "tabs"
+  ],
   "host_permissions": [
     "https://www.youtube.com/*"
   ],
-  "action": { "default_popup": "popup.html" },
   "content_scripts": [
     {
       "matches": ["https://www.youtube.com/watch*"],
-      "js": ["yt_transcript.js"]
+      "js": ["yt_transcript.js"],
+      "run_at": "document_idle"
     }
-  ]
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
 }
