@@ -1,17 +1,22 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>YouTube Transcript Fetcher</title>
+    <title>YouTube Transcript Q&A</title>
     <style>
       body { min-width: 320px; font-family: Arial, sans-serif; }
-      #transcript { width: 100%; height: 220px; margin-top: 10px; overflow: auto; white-space: pre-wrap; }
-      #fetchBtn { margin-top: 10px; }
+      #transcript { width: 100%; height: 120px; margin-top: 10px; display:block; }
+      #ask_btn { margin-top: 10px; display:block; }
+      #question { width: 100%; margin-top:10px; }
+      #result { margin-top: 10px; white-space: pre-wrap; }
     </style>
   </head>
   <body>
     <h2>Fetch Transcript</h2>
     <button id="fetchBtn">Get Transcript</button>
-    <div id="transcript"></div>
+    <textarea id="transcript" readonly placeholder="Transcript will appear here..."></textarea>
+    <input id="question" type="text" placeholder="Type your question here..." />
+    <button id="ask_btn">Ask</button>
+    <div id="result"></div>
     <script src="popup.js"></script>
   </body>
 </html>
