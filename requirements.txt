@@ -9,3 +9,4 @@ youtube-transcript-api
 tiktoken
 wikipedia
 python-dotenv
+faiss-cpu
