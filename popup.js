@@ -1,5 +1,5 @@
 // IMPORTANT: Set this to your live Render backend endpoint, e.g.
-const BACKEND_API_URL = "https://YOUR_RENDER_URL.onrender.com/api/ask"; // <--- Change this!
+const BACKEND_API_URL = "https://youtube-q-a.onrender.com/api/ask"; // <--- Change this!
 
 function displayResult(msg, disabled = false) {
     document.getElementById('result').textContent = msg;
