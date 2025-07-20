@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "YouTube Transcript Q&A (Client-Side)",
+  "name": "YouTube Transcript Q&A (Client Side Robust)",
   "version": "1.0",
-  "description": "Extracts transcript in browser before sending to backend AI for Q&A.",
+  "description": "Extracts transcript in YouTube tab (content script) and sends to backend for Q&A.",
   "permissions": ["tabs"],
   "host_permissions": [
     "https://www.youtube.com/*"
@@ -15,4 +15,3 @@
     }
   ]
 }
-
