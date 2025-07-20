@@ -10,3 +10,6 @@ tiktoken
 wikipedia
 python-dotenv
 faiss-cpu
+deep-translator
+pytube
+requests
