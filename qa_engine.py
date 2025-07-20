@@ -134,16 +134,14 @@ class YouTubeConversationalQA:
     Retrieval-augmented, chat-style Q&A for YouTube videos.
     Has conversation memory and Wikipedia+web fallback.
     """
-    def __init__(self, model="meta-llama/llama-3-70b-instruct:nitro"):
-        # --- Use OpenAI Embeddings ---
+    def __init__(self, model="gpt-3.5-turbo"):  # <-- Default OpenAI model; change if you wish
         self.embeddings = OpenAIEmbeddings(
             openai_api_key=os.environ["OPENAI_API_KEY"],
-            # model="text-embedding-3-small",  # Default is latest; you can uncomment to specify
+            # model="text-embedding-3-small",  # Can specify if you like
         )
         self.vectorstore_cache = {}
         self.llm = ChatOpenAI(
-            openai_api_base="https://openrouter.ai/api/v1",
-            openai_api_key=os.environ["OPENROUTER_API_KEY"],
+            openai_api_key=os.environ["OPENAI_API_KEY"],
             model=model,
             temperature=0.4,
             max_tokens=512,
