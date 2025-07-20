@@ -35,7 +35,6 @@ def extract_video_id(url: str) -> str:
     raise ValueError("No valid video ID found in URL")
 
 def force_translate_to_english(text: str) -> str:
-    # Always attempt translation unless clearly English (if detection fails, still translate)
     try:
         detected = ""
         try:
@@ -73,7 +72,6 @@ def get_video_title(youtube_url: str) -> Optional[str]:
         return yt.title
     except Exception as e:
         logger.warning(f"Could not fetch video title with pytube: {e}")
-        # Try HTML parse fallback
         try:
             page_url = f"https://www.youtube.com/watch?v={extract_video_id(youtube_url)}"
             r = requests.get(page_url, timeout=8)
@@ -198,26 +196,25 @@ class YouTubeConversationalQA:
         context_answer = None
         chain = self.build_chain(video_url, session_id)
 
-        def llm_summary_prompt(chain, custom_q):
-            # LLM prompt to force a high-level summary
-            template = ("Given the following video transcript, summarize the main topic or content of this video in clear English. "
-                        "If the transcript is in another language, assume translation has already been done. "
-                        "Do not make up facts. TL;DR in 2-4 sentences.\nTranscript: {context}")
-            return chain.invoke({"question": template})
+        def llm_summary_prompt(chain, prompt_q):
+            custom_template = (
+                "Given the following video transcript, summarize the main topic or content of this video in clear English. "
+                "If the transcript is in another language, assume it has already been translated. "
+                "Do not make up facts. Please provide 2-4 sentence summary.\nTranscript: {context}"
+            )
+            return chain.invoke({"question": custom_template})
 
         if chain is not None:
             try:
-                # For summary/topic questions, always use strong summary prompt
                 if is_summary_question(question):
                     context_answer = (llm_summary_prompt(chain, question).get("answer","") or "").strip()
-                    # Second chance if vague
+                    # Second try if first answer is vague
                     if self.is_incomplete(context_answer):
-                        context_answer = (llm_summary_prompt(chain, "Please try again; summarize using clear English only.").get("answer","") or "").strip()
+                        context_answer = (llm_summary_prompt(chain, "Try again: summarize in clear English.").get("answer","") or "").strip()
                 else:
                     result = chain.invoke({"question": question})
                     context_answer = (result.get("answer", "") if result else "").strip()
                     if self.is_incomplete(context_answer):
-                        # Last-resort: try a summary prompt if direct QA fails
                         context_answer = (llm_summary_prompt(chain, question).get("answer","") or "").strip()
             except Exception as e:
                 logger.warning(f"Transcript-based QA failed: {e}")
@@ -226,10 +223,11 @@ class YouTubeConversationalQA:
         else:
             fallback_to_title = True
 
+        # Return transcript-based answer if valid
         if context_answer and not self.is_incomplete(context_answer):
             return context_answer
 
-        # Fallback: title-based Wikipedia (and cleaned-up title retry)
+        # Fallback: Wikipedia with title, then cleaned title
         title_q = None
         if fallback_to_title:
             title_q = get_video_title(video_url)
@@ -237,7 +235,7 @@ class YouTubeConversationalQA:
             wiki_ans = wikipedia_search(search_term)
             if (not wiki_ans or self.is_incomplete(wiki_ans)) and title_q:
                 short_search = clean_video_title_for_wikipedia(title_q)
-                if short_search != search_term:  # Avoid infinite loop
+                if short_search != search_term:
                     wiki_ans = wikipedia_search(short_search)
             if wiki_ans and not self.is_incomplete(wiki_ans):
                 return wiki_ans
@@ -252,6 +250,7 @@ class YouTubeConversationalQA:
             if wiki_ans2 and not self.is_incomplete(wiki_ans2):
                 return wiki_ans2
 
+        # Final fallback: explicit web search links
         return web_search_links(question)
 
 if __name__ == "__main__":
