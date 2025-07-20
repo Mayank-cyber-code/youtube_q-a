@@ -1,17 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "YouTube Transcript Extension",
+  "name": "YouTube Transcript Fetcher",
   "version": "1.0",
-  "permissions": [
-    "tabs"
-  ],
+  "description": "Fetch transcripts from YouTube videos directly.",
+  "permissions": ["storage", "scripting", "activeTab", "tabs"],
   "host_permissions": [
     "https://www.youtube.com/*"
   ],
   "content_scripts": [
     {
       "matches": ["https://www.youtube.com/watch*"],
-      "js": ["yt_transcript.js"],
+      "js": ["content.js"],
       "run_at": "document_idle"
     }
   ],
@@ -19,3 +18,4 @@
     "default_popup": "popup.html"
   }
 }
+
