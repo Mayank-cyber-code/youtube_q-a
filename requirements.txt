@@ -1,23 +1,11 @@
-fastapi
-uvicorn
-gunicorn
-
-# For LangChain and chains/memory support (you’re using ConversationalRetrievalChain, ChatOpenAI)
+openai
 langchain
 langchain-community
 langchain-openai
-
-# For YouTube transcript extraction
+fastapi
+uvicorn
+gunicorn
 youtube-transcript-api
-
-# For text splitting, etc.
 tiktoken
-
-# For Wikipedia fallback
 wikipedia
-
-# Google Vertex AI Python SDK (Gemini embeddings)
-google-cloud-aiplatform
-
-# Environment variable management
 python-dotenv
