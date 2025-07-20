@@ -9,13 +9,16 @@ from dotenv import load_dotenv
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 from langchain.schema import Document
 
 import wikipedia  # pip install wikipedia
+
+# --- GOOGLE GEMINI EMBEDDINGS SETUP ---
+from google.cloud import aiplatform
+from google.api_core import exceptions as google_exceptions
 
 # --- SETUP API KEYS ---
 load_dotenv()
@@ -83,11 +86,7 @@ def web_search_links(query: str) -> str:
     )
 
 def clean_for_wikipedia(query: str) -> str:
-    """
-    General extractor for Wikipedia topic: strips common question words, no special-casing.
-    """
     query = query.strip()
-    # Remove common question starters, e.g., "What is the capital of France?" -> "the capital of France"
     match = re.match(r"(who|what|when|where|why|how)\s+(is|are|was|were|do|does|did|has|have|can|could|should|would)?\s*(.*)", query, flags=re.IGNORECASE)
     if match:
         topic = match.group(3).strip(" .?")
@@ -134,16 +133,42 @@ VAGUE_PATTERNS = [
     "unfortunately"
 ]
 
+class GeminiEmbeddings:
+    """
+    Wrapper for Gemini API (Vertex AI Text Embeddings). Mimics .embed_documents().
+    """
+    def __init__(self, model_name="textembedding-gecko@latest", project=None, location="us-central1"):
+        self.model_name = model_name
+        self.project = project or os.environ.get("GCP_PROJECT")
+        self.location = location
+        # Model loading is on demand and handled by API service
+
+    def embed_documents(self, texts: List[str]) -> List[list]:
+        try:
+            # Initialize only when needed (saves memory)
+            aiplatform.init(project=self.project, location=self.location)
+            model = aiplatform.TextEmbeddingModel.from_pretrained(self.model_name)
+            # Each result in output.embeddings is a vector (list of float)
+            output = model.get_embeddings(texts)
+            return [emb.embedding for emb in output]
+        except google_exceptions.GoogleAPICallError as e:
+            logger.error(f"Error from Gemini API: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Gemini embedding error: {e}")
+            raise
+
 class YouTubeConversationalQA:
     """
     Retrieval-augmented, chat-style Q&A for YouTube videos.
-    Has conversation memory and Wikipedia+web fallback.
+    Uses Gemini embeddings (Vertex AI) and Wikipedia+web fallback.
     """
     def __init__(self, model="meta-llama/llama-3-70b-instruct:nitro"):
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/paraphrase-MiniLM-L3-v2",
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True}
+        # --- Use Gemini embeddings instead of HuggingFace ---
+        self.embeddings = GeminiEmbeddings(
+            model_name="textembedding-gecko@001",  # or @latest, consult Vertex AI docs
+            project=os.environ.get("GCP_PROJECT"),
+            location="us-central1"
         )
         self.vectorstore_cache = {}
         self.llm = ChatOpenAI(
@@ -161,13 +186,21 @@ class YouTubeConversationalQA:
             docs = get_transcript_docs(video_id)
             if not docs:
                 raise RuntimeError("No transcript available for this video and answer may be wrong.")
+
+            # --- Use Gemini embeddings for splits ---
             splitter = RecursiveCharacterTextSplitter(
                 chunk_size=1000, chunk_overlap=200, length_function=len,
                 separators=["\n\n", "\n", ". ", " ", ""]
             )
             splits = splitter.split_documents(docs)
-            vdb = FAISS.from_documents(splits, self.embeddings)
+            # Get just the text for embedding
+            split_texts = [doc.page_content for doc in splits]
+            # Get vectors from Gemini API
+            vectors = self.embeddings.embed_documents(split_texts)
+            # Build Docs with precomputed vectors for FAISS
+            vdb = FAISS.from_texts(split_texts, embedding=self.embeddings.embed_documents)
             self.vectorstore_cache[video_id] = vdb
+
         retriever = self.vectorstore_cache[video_id].as_retriever()
         if session_id not in self.convs:
             self.convs[session_id] = ConversationBufferMemory(
@@ -190,7 +223,6 @@ class YouTubeConversationalQA:
         for pat in VAGUE_PATTERNS:
             if pat in lower:
                 return True
-        # Optionally treat as incomplete if very short
         if len(text.strip()) < 48:
             return True
         return False
@@ -205,11 +237,9 @@ class YouTubeConversationalQA:
         except Exception as e:
             logger.error(f"Transcript-based QA failed: {e}")
 
-        # Wikipedia fallback if context answer is missing or not detailed
         wiki_ans = None
         if context_answer is None or self.is_incomplete(context_answer):
             wiki_ans = wikipedia_search(question)
-            # If Wikipedia answer is itself vague, try to clean the query and search again
             if wiki_ans:
                 if self.is_incomplete(wiki_ans):
                     topic = clean_for_wikipedia(question)
