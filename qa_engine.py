@@ -5,6 +5,7 @@ from typing import List, Optional
 
 from dotenv import load_dotenv
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -22,7 +23,6 @@ load_dotenv()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise RuntimeError("OpenAI API key not set! Please set in the environment or .env file.")
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,14 @@ def get_transcript_docs(video_id: str, prefer_languages=None) -> Optional[List[D
             logger.error(f"Error loading transcript: {e}")
     return None
 
+def get_transcript_text(video_id: str, prefer_languages=None) -> Optional[str]:
+    docs = get_transcript_docs(video_id, prefer_languages=prefer_languages)
+    if docs and docs[0].page_content:
+        text = docs[0].page_content
+        return text if len(text.strip()) > 16 else None
+    return None
+
 def get_video_title(youtube_url: str) -> Optional[str]:
-    # pytube then HTML fallback
     try:
         video_id = extract_video_id(youtube_url)
         yt = YouTube(f"https://www.youtube.com/watch?v={video_id}")
@@ -122,12 +128,7 @@ def clean_for_wikipedia(query: str) -> str:
         return topic
     return query
 
-VAGUE_PATTERNS = [
-    "do not like each other", "i don't know", "i do not know", "not mentioned", "not provided",
-    "not stated", "no idea", "no information", "no details", "insufficient information",
-    "unclear", "unable to determine", "cannot determine", "can't say", "no context", "context not found",
-    "the transcript does not", "sorry", "unfortunately"
-]
+VAGUE_PATTERNS = ["do not like each other", "i don't know", "i do not know", "not mentioned", "not provided", "not stated", "no idea", "no information", "no details", "insufficient information", "unclear", "unable to determine", "cannot determine", "can't say", "no context", "context not found", "the transcript does not", "sorry", "unfortunately"]
 
 def is_summary_question(question: str) -> bool:
     qs = question.lower()
@@ -141,9 +142,7 @@ def is_summary_question(question: str) -> bool:
 
 class YouTubeConversationalQA:
     def __init__(self, model="gpt-3.5-turbo"):
-        self.embeddings = OpenAIEmbeddings(
-            openai_api_key=OPENAI_API_KEY,
-        )
+        self.embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
         self.vectorstore_cache = {}
         self.llm = ChatOpenAI(
             openai_api_key=OPENAI_API_KEY,
@@ -154,6 +153,7 @@ class YouTubeConversationalQA:
         self.convs = {}
 
     def build_chain(self, video_url: str, session_id: str = "default"):
+        # Standard chain, for non-summary questions
         video_id = extract_video_id(video_url)
         if video_id not in self.vectorstore_cache:
             docs = get_transcript_docs(video_id)
@@ -169,9 +169,7 @@ class YouTubeConversationalQA:
         retriever = self.vectorstore_cache[video_id].as_retriever()
         if session_id not in self.convs:
             self.convs[session_id] = ConversationBufferMemory(
-                memory_key="chat_history",
-                return_messages=True,
-                output_key="answer"
+                memory_key="chat_history", return_messages=True, output_key="answer"
             )
         return ConversationalRetrievalChain.from_llm(
             llm=self.llm,
@@ -190,31 +188,34 @@ class YouTubeConversationalQA:
         return False
 
     def ask(self, video_url: str, question: str, session_id: str = "default") -> str:
+        if is_summary_question(question):
+            video_id = extract_video_id(video_url)
+            transcript_text = get_transcript_text(video_id)
+            if transcript_text and len(transcript_text.strip()) > 48:
+                prompt = (
+                    "Summarize the main topic or content of the following YouTube video transcript in clear English. "
+                    "Use only the transcript, do not use outside sources or speculate. "
+                    "Transcript:\n\n"
+                    f"{transcript_text}\n\nSummary (2-4 sentences):"
+                )
+                try:
+                    answer = self.llm.invoke(prompt)
+                    answer = answer.strip() if isinstance(answer, str) else getattr(answer, "content", "")
+                    if not self.is_incomplete(answer):
+                        return answer
+                except Exception as e:
+                    logger.warning(f"LLM summary failed on full transcript: {e}")
+
+        # Non-summary Q: use chunk retrieval
         fallback_to_title = False
         context_answer = None
         chain = self.build_chain(video_url, session_id)
-
-        def llm_summary_prompt(chain):
-            custom_template = (
-                "Given the following video transcript, summarize the main topic or content of this video in clear English. "
-                "Assume translation has already been done if the original was not English. "
-                "Do not speculate. Give a concise summary in 2-4 sentences. Transcript: {context}"
-            )
-            return chain.invoke({"question": custom_template})
-
         if chain is not None:
             try:
-                if is_summary_question(question):
-                    context_answer = (llm_summary_prompt(chain).get("answer","") or "").strip()
-                    # Second try if too vague/short
-                    if self.is_incomplete(context_answer):
-                        context_answer = (llm_summary_prompt(chain).get("answer","") or "").strip()
-                else:
-                    result = chain.invoke({"question": question})
-                    context_answer = (result.get("answer", "") if result else "").strip()
-                    # For non-summary Q, give a last shot with summary prompt if vague answer
-                    if self.is_incomplete(context_answer):
-                        context_answer = (llm_summary_prompt(chain).get("answer","") or "").strip()
+                result = chain.invoke({"question": question})
+                context_answer = (result.get("answer", "") if result else "").strip()
+                if self.is_incomplete(context_answer):
+                    context_answer = ""
             except Exception as e:
                 logger.warning(f"Transcript-based QA failed: {e}")
                 context_answer = None
@@ -222,23 +223,20 @@ class YouTubeConversationalQA:
         else:
             fallback_to_title = True
 
-        if context_answer and not self.is_incomplete(context_answer):
+        if context_answer:
             return context_answer
 
-        # Fallback: try video title for Wikipedia (then cleaned-up title)
-        title_q = None
-        if fallback_to_title:
-            title_q = get_video_title(video_url)
-            search_term = title_q if title_q else question
-            wiki_ans = wikipedia_search(search_term)
-            if (not wiki_ans or self.is_incomplete(wiki_ans)) and title_q:
-                short_search = clean_video_title_for_wikipedia(title_q)
-                if short_search != search_term:
-                    wiki_ans = wikipedia_search(short_search)
-            if wiki_ans and not self.is_incomplete(wiki_ans):
-                return wiki_ans
+        # Fallback to Wikipedia with video title, then cleaned title
+        title_q = get_video_title(video_url) if fallback_to_title else None
+        search_term = title_q if title_q else question
+        wiki_ans = wikipedia_search(search_term)
+        if (not wiki_ans or self.is_incomplete(wiki_ans)) and title_q:
+            short_search = clean_video_title_for_wikipedia(title_q)
+            if short_search != search_term:
+                wiki_ans = wikipedia_search(short_search)
+        if wiki_ans and not self.is_incomplete(wiki_ans):
+            return wiki_ans
 
-        # Further fallback: search Wikipedia by the question directly
         wiki_ans = wikipedia_search(question)
         if wiki_ans and not self.is_incomplete(wiki_ans):
             return wiki_ans
@@ -250,6 +248,7 @@ class YouTubeConversationalQA:
                 return wiki_ans2
 
         return web_search_links(question)
+
 if __name__ == "__main__":
     print("Welcome to YouTube Q&A! Paste any public YouTube video URL.")
     qa = YouTubeConversationalQA()
